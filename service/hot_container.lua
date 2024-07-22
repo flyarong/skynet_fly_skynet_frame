@@ -10,25 +10,68 @@ local ARGV = {...}
 MODULE_NAME = ARGV[1]
 local INDEX = tonumber(ARGV[2])
 local LAUNCH_DATE = ARGV[3]
-local LAUNCH_TIME = ARGV[4]
-local VERSION = ARGV[5]
+local LAUNCH_TIME = tonumber(ARGV[4])
+local VERSION = tonumber(ARGV[5])
 assert(MODULE_NAME)
 
 local new_loaded = _loaded
 
+local CMD = {}
+
+local skynet_util = require "skynet-fly.utils.skynet_util"
+skynet_util.set_cmd_table(CMD)
+
 local MODULE_NAME = MODULE_NAME
 local module_info = require "skynet-fly.etc.module_info"
-local contriner_client = require "skynet-fly.client.contriner_client"
 local contriner_interface = require "skynet-fly.contriner.contriner_interface"
-contriner_client:close_ready()
+local SERVER_STATE_TYPE = require "skynet-fly.enum.SERVER_STATE_TYPE"
+module_info.set_base_info {
+	module_name = MODULE_NAME,
+	index = INDEX,
+	launch_date = LAUNCH_DATE,
+	launch_time = LAUNCH_TIME,
+	version = VERSION,
+}
 
-local CMD = require(MODULE_NAME)
+local SERVER_STATE = SERVER_STATE_TYPE.loading
+local IS_CLOSE_HOT_RELOAD = false
+
+--启动成功之后回调列表
+local g_start_after_cb = {}
+
+--确定退出之后的回调列表
+local g_fix_exit_after_cb = {}
+
+--contriner_interface
+function contriner_interface.get_server_state()
+	return SERVER_STATE
+end
+
+function contriner_interface.hook_start_after(cb)
+	table.insert(g_start_after_cb, cb)
+end
+
+function contriner_interface.hook_fix_exit_after(cb)
+	table.insert(g_fix_exit_after_cb, cb)
+end
+
+function contriner_interface.close_hotreload()
+	IS_CLOSE_HOT_RELOAD = true
+end
+
+local contriner_client = require "skynet-fly.client.contriner_client"
+contriner_client:close_ready()
 local write_mod_required = require "skynet-fly.write_mod_required"
-local skynet_util = require "skynet-fly.utils.skynet_util"
 local log = require "skynet-fly.log"
 local timer = require "skynet-fly.timer"
 
-local SERVER_STATE_TYPE = contriner_interface.SERVER_STATE_TYPE
+do
+	local mod_cmd = require(MODULE_NAME)
+	for name,func in pairs(mod_cmd) do
+		assert(not CMD[name], "exists cmd name " .. name)
+		CMD[name] = func
+	end
+end
 
 local NOT_FUNC = function() return true end
 
@@ -44,14 +87,6 @@ assert(module_exit,MODULE_NAME .. " not exit func")
 local old_skynet_exit = skynet.exit
 
 local SELF_ADDRESS = skynet.self()
-
-module_info.set_base_info {
-	module_name = MODULE_NAME,
-	index = INDEX,
-	launch_date = LAUNCH_DATE,
-	launch_time = LAUNCH_TIME,
-	version = VERSION,
-}
 
 skynet.exit = function()
 	log.info("mod exit ",MODULE_NAME,INDEX,LAUNCH_DATE)
@@ -93,7 +128,7 @@ local function check_exit()
 		if not next(g_source_map) then
 			--真正退出
 			log.info("exited")
-			contriner_interface.set_server_state(SERVER_STATE_TYPE.exited)
+			SERVER_STATE = SERVER_STATE_TYPE.exited
 			if module_exit() then
 				g_exit_timer = timer:new(timer.minute * 10,1,skynet.exit)
 			else
@@ -112,8 +147,20 @@ function CMD.start(cfg)
 		skynet.fork(write_mod_required,MODULE_NAME,new_loaded)
 	end
 
-	contriner_client:open_ready()
-	contriner_interface.set_server_state(SERVER_STATE_TYPE.starting)
+	if ret then
+		for _,func in ipairs(g_start_after_cb) do
+			skynet.fork(func)
+		end
+		contriner_client:open_ready()
+		SERVER_STATE = SERVER_STATE_TYPE.starting
+	else
+		SERVER_STATE = SERVER_STATE_TYPE.start_failed
+	end
+
+	if INDEX == 1 and IS_CLOSE_HOT_RELOAD then
+		skynet.send('.contriner_mgr', 'lua', 'close_loads', SELF_ADDRESS, MODULE_NAME)
+	end
+
 	return ret
 end
 
@@ -123,7 +170,10 @@ function CMD.close()
 	g_check_timer = timer:new(timer.minute * 10,timer.loop,check_exit)
 	g_check_timer:after_next()
 	module_fix_exit() --确定要退出
-	contriner_interface.set_server_state(SERVER_STATE_TYPE.fix_exited)
+	for _,func in ipairs(g_fix_exit_after_cb) do
+		skynet.fork(func)
+	end
+	SERVER_STATE = SERVER_STATE_TYPE.fix_exited
 end
 
 --退出之前

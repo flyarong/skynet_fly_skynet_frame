@@ -1,4 +1,5 @@
 local skynet = require "skynet"
+local module_info = require "skynet-fly.etc.module_info"
 
 local tonumber = tonumber
 local assert = assert
@@ -10,6 +11,9 @@ local retpack = skynet.retpack
 local tunpack = table.unpack
 local NOT_RET = {}
 
+local g_is_regiter = false
+
+local g_CMD = nil
 
 local M = {
     NOT_RET = NOT_RET
@@ -20,11 +24,14 @@ local M = {
     cmd_func 函数表
 ]]
 function M.lua_dispatch(cmd_func) 
+    assert(not g_is_regiter, "repeat lua_dispatch")
+    
+    g_is_regiter = true
     assert(cmd_func)
     
     skynet.dispatch('lua',function(session,source,cmd,...)
         local f = cmd_func[cmd]
-        assert(f,'cmd no found :'..cmd .. ' from : ' .. source)
+        assert(f,'cmd no found :'..cmd .. ' from : ' .. skynet.address(source))
 
         if session == 0 then
             f(...)
@@ -39,6 +46,9 @@ function M.lua_dispatch(cmd_func)
 end
 
 function M.lua_src_dispatch(cmd_func)
+    assert(not g_is_regiter, "repeat lua_src_dispatch")
+    g_is_regiter = true
+
     assert(cmd_func)
     
     skynet.dispatch('lua',function(session,source,cmd,...)
@@ -91,6 +101,28 @@ function M.register_info_func(info_name,info_func)
     assert(not g_info_func_map[info_name], " exists " .. info_name)
 
     g_info_func_map[info_name] = info_func
+end
+
+--设置服务的CMD表
+function M.set_cmd_table(CMD)
+    g_CMD = CMD
+end
+
+--扩展CMD函数
+function M.extend_cmd_func(cmd_name, func)
+    assert(g_CMD, "please set_cmd_table")
+    assert(not g_CMD[cmd_name], "exists cmd_name " .. tostring(cmd_name))
+    g_CMD[cmd_name] = func
+end
+
+--是否可热更服务
+function M.is_hot_container_server()
+    local base_info = module_info.get_base_info()
+    if base_info.index then                         --是可热更服务
+        return true
+    else
+        return false
+    end
 end
 
 return M

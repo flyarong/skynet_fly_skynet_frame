@@ -1,30 +1,36 @@
 local log = require "skynet-fly.log"
 local skynet = require "skynet"
-local contriner_client = require "skynet-fly.client.contriner_client"
 local pb_netpack = require "skynet-fly.netpack.pb_netpack"
 local timer = require "skynet-fly.timer"
 local errorcode = require "enum.errorcode"
 local errors_msg = require "msg.errors_msg"
 local login_msg = require "msg.login_msg"
 
+local pbnet_util = require "skynet-fly.utils.net.pbnet_util"
+local ws_pbnet_util = require "skynet-fly.utils.net.ws_pbnet_util"
+
 local assert = assert
-local x_pcall = x_pcall
 
 local g_interface_mgr = nil
 
 local M = {}
 
-local confclient = contriner_client:new("share_config_m")
-local room_game_login = confclient:mod_call('query','room_game_login')
-
 --登录检测的超时时间
 M.time_out = timer.second * 5
 --解包函数
-M.unpack = require(room_game_login.net_util).unpack
+M.unpack = pbnet_util.unpack
 --发包函数
-M.send = require(room_game_login.net_util).send
+M.send = pbnet_util.send
 --广播函数
-M.broadcast = require(room_game_login.net_util).broadcast
+M.broadcast = pbnet_util.broadcast
+
+--解包函数
+M.ws_unpack = ws_pbnet_util.unpack
+--发包函数
+M.ws_send = ws_pbnet_util.send
+--广播函数
+M.ws_broadcast = ws_pbnet_util.broadcast
+
 
 function M.init(interface_mgr)
 	g_interface_mgr = interface_mgr
@@ -89,6 +95,9 @@ end
 function M.repeat_login(player_id)
 	log.info("repeat_login >>> ",player_id)
 	errors_msg:errors(player_id,errorcode.REPAET_LOGIN,"repeat_login")
+	skynet.timeout(100, function()
+		errors_msg:errors(player_id,errorcode.REPAET_LOGIN,"repeat_login2")
+	end)
 end
 
 return M

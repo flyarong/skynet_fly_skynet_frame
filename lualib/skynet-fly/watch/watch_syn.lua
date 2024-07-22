@@ -2,7 +2,8 @@ local skynet = require "skynet"
 local skynet_util = require "skynet-fly.utils.skynet_util"
 local log = require "skynet-fly.log"
 local contriner_interface = require "skynet-fly.contriner.contriner_interface"
-local SERVER_STATE_TYPE = contriner_interface.SERVER_STATE_TYPE
+local SYSCMD = require "skynet-fly.enum.SYSCMD"
+local SERVER_STATE_TYPE = require "skynet-fly.enum.SERVER_STATE_TYPE"
 
 local assert = assert
 local setmetatable = setmetatable
@@ -11,8 +12,8 @@ local coroutine = coroutine
 local tinsert = table.insert
 local tremove = table.remove
 
-local watch_cmd = "_watch"
-local unwatch_cmd = "_unwatch"
+local watch_cmd = SYSCMD.watch_cmd
+local unwatch_cmd = SYSCMD.unwatch_cmd
 
 local M = {}
 
@@ -61,7 +62,7 @@ function M.new_server(CMD)
 
     CMD[watch_cmd] = function(source, name, old_version)
         local w_map = assert(watch_map[name], "not exists watch name " .. name)
-        assert(not w_map[source], "exists watch " .. source)
+        assert(not w_map[source], "exists watch " .. skynet.address(source))
         local version = version_map[name]
         local is_firsts = is_first_map[name]
         local v = value_map[name]
@@ -103,9 +104,12 @@ function M.new_server(CMD)
         end
     end
 
-    local cancel_exit = CMD['cancel_exit']
+    local old_cancel_exit = CMD['cancel_exit']
     CMD['cancel_exit'] = function()
         is_exit = false
+        if old_cancel_exit then
+            old_cancel_exit()
+        end
     end
 
     setmetatable(t, server_mt)
@@ -214,7 +218,7 @@ function client:watch(name)
                 if not_update_cnt % 100 == 0 then
                     --正常不会有这么多次，出现这种情况，肯定是有bug流量没切过去
                     log.warn("watch move times abnormal ", not_update_cnt)
-                elseif not_update_cnt > 10000 then
+                elseif not_update_cnt > 1000 then
                     --避免出现这种情况导致死循环
                     log.error("watch move times fatal ", not_update_cnt)
                     break
@@ -255,7 +259,6 @@ end
 function client:await_get(name)
     assert(self.is_watch_map[name], "not watch name " .. name)
     local version = self.version_map[name]
-    local event_type = nil
     if not version then
         self._add_wait(name)
     end

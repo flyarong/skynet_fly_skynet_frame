@@ -10,6 +10,9 @@ local game_msg = require "msg.game_msg"
 local msg_id = require "enum.msg_id"
 local pack_helper = require "common.pack_helper"
 
+local pbnet_byid = require "skynet-fly.utils.net.pbnet_byid"
+local ws_pbnet_byid = require "skynet-fly.utils.net.ws_pbnet_byid"
+
 local string = string
 local assert = assert
 local ipairs = ipairs
@@ -26,9 +29,15 @@ local MINE_MAX = 100
 
 local M = {}
 
-M.send = require(module_cfg.net_util).send
+--发包函数
+M.send = pbnet_byid.send
 --广播函数
-M.broadcast = require(module_cfg.net_util).broadcast
+M.broadcast = pbnet_byid.broadcast
+
+--发包函数
+M.ws_send = ws_pbnet_byid.send
+--广播函数
+M.ws_broadcast = ws_pbnet_byid.broadcast
 
 function M.init(interface_mgr)
 	g_interface_mgr = interface_mgr
@@ -38,11 +47,9 @@ function M.init(interface_mgr)
 end
 
 function M.table_creator(table_id)
-	local m_HANDLE = {}
 	local m_interface_mgr = g_interface_mgr:new(table_id)
 	local m_errors_msg = errors_msg:new(m_interface_mgr)
 	local m_game_msg = game_msg:new(m_interface_mgr)
-	local m_table_id = table_id
     local m_game_state = GAME_STATE_ENUM.waiting --参与游戏的玩家座位号
     local m_mine = 0                             --雷
     local m_doing_seat_id = nil                  --操作座位号
@@ -243,7 +250,6 @@ function M.table_creator(table_id)
 					return
 				end
 
-				local seater = m_seat_list[seat_id]
 				local doing_seat_player = nil
 				local doing_player_id = 0
 				local doing_seat_id = 0

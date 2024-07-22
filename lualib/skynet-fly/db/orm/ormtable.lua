@@ -159,7 +159,7 @@ local function add_key_select(t, entry, is_add)
         else
             if not key_select_map[filed_value] then
                 if t._cache_map then
-                    assert(t._cache_map:set_cache(entry,t), "set_cache err")
+                    t._cache_map:set_cache(entry,t)
                 end
                 if invaild then
                     key_cache_num_map[filed_value] = INVAILD_POINT
@@ -198,7 +198,7 @@ local function add_key_select(t, entry, is_add)
                     res_entry = entry
                 else
                     if t._cache_map then
-                        assert(t._cache_map:update_cache(res_entry,t), "update cache err")
+                        t._cache_map:update_cache(res_entry,t)
                     end
                 end
             end
@@ -212,7 +212,6 @@ end
 -- 设置total_count
 local function set_total_count(t, key_values, total_count)
     if not t._cache_time then return end
-    local key_list = t._keylist
     local key_cache_num_map = t._key_cache_num_map                      --缓存数量
     local len = #key_values
     for i = 1, len do
@@ -234,8 +233,6 @@ local function get_key_select(t, key_values)
     if not t._cache_time then return end
     local key_select_map = t._key_select_map
     local key_cache_num_map = t._key_cache_num_map                      --缓存数量
-    local key_list = t._keylist
-    local maxlen = #key_list
     local len = #key_values
     for i = 1, len do
         local filed_value = key_values[i]
@@ -351,6 +348,7 @@ end
 
 local M = {
     FILED_TYPE = FILED_TYPE,
+    FILED_LUA_DEFAULT = FILED_LUA_DEFAULT,
 }
 local mata = {__index = M, __gc = function(t)
     if t._time_obj then
@@ -462,7 +460,7 @@ local function excute_time_out(t, entry)
     local change_flag_map = t._change_flag_map
     if change_flag_map[entry] then
         --还没保存数据 还不能清除
-        assert(t._cache_map:set_cache(entry, t), "set cache err")   --重新设置缓存
+        t._cache_map:set_cache(entry, t)   --重新设置缓存
         skynet.fork(inval_time_out, t._week_t)
     else
         if entry:is_invaild() then
@@ -481,8 +479,6 @@ end
 --检查key values 是否合法
 local function check_key_values(t, key_values)
     local keylist = t._keylist
-    local filed_list = t._filed_list
-    local filed_map = t._filed_map
     for i = 1,#key_values do
         local filed_name = keylist[i]
         local value = key_values[i]
@@ -494,7 +490,6 @@ end
 local function create_invaild_entry(t, key_values)
     --无效数据，只需要添加key的数据就行
     local keylist = t._keylist
-    local filed_list = t._filed_list
     local filed_map = t._filed_map
     local data = {}
     for i = 1, #keylist do
@@ -648,7 +643,7 @@ get_entry = function(t, key_values, is_init_get_all)
 
         if t._cache_map then
             for _,entry in ipairs(entry_list) do
-                assert(t._cache_map:update_cache(entry, t), "err update_cache")
+                t._cache_map:update_cache(entry, t)
             end
         end
 
@@ -665,7 +660,6 @@ end
 
 local function get_one_entry(t, key_values)
     assert(t._is_builder, "not builder can`t get_one_entry")
-    local key_list = t._keylist
     local entry, is_cache = get_key_select(t, key_values)
     if not is_cache then
         --永久 缓存没有就是没有
@@ -685,8 +679,8 @@ local function get_one_entry(t, key_values)
         end
     end
 
-    if t._cache_map then
-        assert(t._cache_map:update_cache(entry, t), "err update_cache")
+    if entry and t._cache_map then
+        t._cache_map:update_cache(entry, t)
     end
 
     if entry and entry:is_invaild() then

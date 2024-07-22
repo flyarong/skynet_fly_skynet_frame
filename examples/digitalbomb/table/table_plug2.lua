@@ -5,6 +5,9 @@ local table_logic = require "table.table_logic"
 local errors_msg = require "msg.errors_msg"
 local log = require "skynet-fly.log"
 
+local pbnet_util = require "skynet-fly.utils.net.pbnet_util"
+local ws_pbnet_util = require "skynet-fly.utils.net.ws_pbnet_util"
+
 local assert = assert
 
 local g_table_conf = module_cfg.table_conf
@@ -17,9 +20,15 @@ local MINE_MAX = 100
 
 local M = {}
 
-M.send = require(module_cfg.net_util).send
+--发包函数
+M.send = pbnet_util.send
 --广播函数
-M.broadcast = require(module_cfg.net_util).broadcast
+M.broadcast = pbnet_util.broadcast
+
+--发包函数
+M.ws_send = ws_pbnet_util.send
+--广播函数
+M.ws_broadcast = ws_pbnet_util.broadcast
 
 function M.init(interface_mgr)
 	g_interface_mgr = interface_mgr
@@ -29,11 +38,14 @@ function M.init(interface_mgr)
 	pb_netpack.load('./proto')
 end
 
-function M.table_creator(table_id)
+function M.table_creator(table_id, table_name, ...)
+	local args = {...}
+	local create_player_id = args[1]
     local m_interface_mgr = g_interface_mgr:new(table_id)
 	local m_errors_msg = errors_msg:new(m_interface_mgr)
     local m_logic = table_logic:new(m_interface_mgr, g_table_conf, table_id)
 
+	log.info("table_creator >>> ",table_id, table_name, create_player_id)
     return {
         enter = function(player_id)
             return m_logic:enter(player_id)

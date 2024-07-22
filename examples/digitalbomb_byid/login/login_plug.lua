@@ -9,24 +9,30 @@ local login_msg = require "msg.login_msg"
 local msg_id = require "enum.msg_id"
 local pack_helper = require "common.pack_helper"
 
+local pbnet_byid = require "skynet-fly.utils.net.pbnet_byid"
+local ws_pbnet_byid = require "skynet-fly.utils.net.ws_pbnet_byid"
+
 local assert = assert
-local x_pcall = x_pcall
 
 local g_interface_mgr = nil
 
 local M = {}
 
-local confclient = contriner_client:new("share_config_m")
-local room_game_login = confclient:mod_call('query','room_game_login')
-
 --登录检测的超时时间
 M.time_out = timer.second * 5
 --解包函数
-M.unpack = require(room_game_login.net_util).unpack
+M.unpack = pbnet_byid.unpack
 --发包函数
-M.send = require(room_game_login.net_util).send
+M.send = pbnet_byid.send
 --广播函数
-M.broadcast = require(room_game_login.net_util).broadcast
+M.broadcast = pbnet_byid.broadcast
+
+--解包函数
+M.ws_unpack = ws_pbnet_byid.unpack
+--发包函数
+M.ws_send = ws_pbnet_byid.send
+--广播函数
+M.ws_broadcast = ws_pbnet_byid.broadcast
 
 function M.init(interface_mgr)
 	g_interface_mgr = interface_mgr

@@ -38,24 +38,7 @@ M.register_cmd = CMD
 function M.init(alloc_mgr) --初始化
 	--初始化的时候不能访问其他服务，用fock让它启动完成再去
 	skynet.fork(function()
-		log.info("创建桌子》》》》》》》》",alloc_mgr.create_table("default"))
-	end)
-
-	-- 监听有没有空桌子
-	timer:new(timer.minute,0,function()
-		local empty_map = alloc_mgr.get_empty_map()
-		for table_id,empty_time in pairs(empty_map) do
-			local t_info = g_table_map[table_id]
-			if not t_info then
-				log.error("桌子不存在", table_id)
-			else
-				if t_info.state == GAME_STATE.stop then
-					log.error("销毁已经停止的空桌子》》》》》》》", table_id, t_info.state, alloc_mgr.dismisstable(table_id),empty_time)
-				else
-					log.error("桌子还不能销毁>>>>>>>>>>>>>>>>>", table_id, t_info.state)
-				end
-			end
-		end
+		log.info("创建桌子》》》》》》》》",alloc_mgr.create_table("room_3", 10001000))
 	end)
 end
 

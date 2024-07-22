@@ -5,6 +5,7 @@ local mysqlf = require "skynet-fly.db.mysqlf"
 local log = require "skynet-fly.log"
 
 local FILED_TYPE = require "skynet-fly.db.orm.ormtable".FILED_TYPE
+local FILED_LUA_DEFAULT = require "skynet-fly.db.orm.ormtable".FILED_LUA_DEFAULT
 
 local setmetatable = setmetatable
 local sfild = string.find
@@ -87,7 +88,11 @@ local function create_table(t)
         local filed_name = filed_list[i]
         local filed_type = filed_map[filed_name]
         local convert_type = assert(FILED_TYPE_SQL_TYPE[filed_type],"unknown type : " .. filed_type)
-        sql_str = sql_str .. sformat("\t`%s` %s,\n",filed_name, convert_type)
+        if filed_type == FILED_TYPE.text or filed_type == FILED_TYPE.blob then          --text 和 blob类型不支持指定默认值
+            sql_str = sql_str .. sformat("\t`%s` %s,\n", filed_name, convert_type)
+        else
+            sql_str = sql_str .. sformat("\t`%s` %s NOT NULL DEFAULT '%s',\n", filed_name, convert_type, FILED_LUA_DEFAULT[filed_type])
+        end
     end
 
     sql_str = sql_str .. sformat("\tprimary key(%s)\n", tconcat(key_list,','))
@@ -159,9 +164,17 @@ local function alter_table(t, describe, index_info)
             local filed_type = filed_map[filed_name]
             local convert_type = assert(FILED_TYPE_SQL_TYPE[filed_type],"unknown type : " .. filed_type)
             if not is_end then
-                sql_str = sql_str .. sformat("add `%s` %s,\n", filed_name, convert_type)
+                if filed_type == FILED_TYPE.text or filed_type == FILED_TYPE.blob then
+                    sql_str = sql_str .. sformat("add `%s` %s,\n", filed_name, convert_type)
+                else
+                    sql_str = sql_str .. sformat("add `%s` %s NOT NULL DEFAULT '%s',\n", filed_name, convert_type, FILED_LUA_DEFAULT[filed_type])
+                end
             else
-                sql_str = sql_str .. sformat("add `%s` %s;\n", filed_name, convert_type)
+                if filed_type == FILED_TYPE.text or filed_type == FILED_TYPE.blob then
+                    sql_str = sql_str .. sformat("add `%s` %s;\n", filed_name, convert_type)
+                else
+                    sql_str = sql_str .. sformat("add `%s` %s NOT NULL DEFAULT '%s';\n", filed_name, convert_type, FILED_LUA_DEFAULT[filed_type])
+                end
             end
         end
 
@@ -284,7 +297,6 @@ function M:builder(tab_name, filed_list, filed_map, key_list)
     local function entry_data_to_list(entry_data)
         for i = 1,#filed_list do
             local fn = filed_list[i]
-            local ft = filed_map[fn]
             local fv = entry_data[fn]
 
             if type(fv) == 'string' then

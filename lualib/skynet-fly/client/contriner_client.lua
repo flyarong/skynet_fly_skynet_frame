@@ -1,5 +1,6 @@
 local skynet = require "skynet"
 local module_info = require "skynet-fly.etc.module_info"
+local skynet_util = require "skynet-fly.utils.skynet_util"
 local setmetatable = setmetatable
 local assert = assert
 local pairs = pairs
@@ -27,6 +28,7 @@ local g_register_map = {}    --注册表
 local g_week_visitor_map = {} --弱访问者
 local g_instance_map = {}     --常驻实例
 local g_queryed_map = {}      --查询到地址的回调列表
+local g_querycbed_map = {}	  --查询到地址已执行回调列表
 local g_updated_map = {}      --更新地址的回调列表
 local SERVICE_NAME = SERVICE_NAME
 --弱引用原表
@@ -80,7 +82,7 @@ end
 
 local function call_back_updated(updated)
 	for _,func in ipairs(updated) do
-		func()
+		skynet.fork(func)
 	end
 end
 
@@ -105,7 +107,7 @@ end
 
 local function call_back_queryed(queryed)
 	for _,func in ipairs(queryed) do
-		func()
+		skynet.fork(func)
 	end
 end
 
@@ -119,7 +121,8 @@ g_mod_svr_ids_map = setmetatable({},{__index = function(t,key)
 	add_id_list_week(key,t[key])
 	register_visitor(t[key])
 	local queryed = g_queryed_map[key]
-	if queryed then
+	if queryed and not g_querycbed_map[key] then
+		g_querycbed_map[key] = true
 		skynet.fork(call_back_queryed, queryed)
 	end
 	return t[key],g_mod_svr_version_map[key]
@@ -133,10 +136,8 @@ local function monitor_all()
 		while not IS_CLOSE do
 			mod_version_map = skynet.call('.contriner_mgr','lua', 'monitor_new', SELF_ADDRESS, mod_version_map)
 			for mod_name,_ in pairs(mod_version_map) do
-				if not g_register_map[mod_name] then
-					g_register_map[mod_name] = true
-					local id_list = g_mod_svr_ids_map[mod_name]
-				end
+				g_register_map[mod_name] = true
+				local _ = g_mod_svr_ids_map[mod_name]
 			end
 		end
 	end)
@@ -152,19 +153,6 @@ skynet.exit = function()
 	end
 	return skynet_exit()
 end
-
---查询所有服务的地址
-skynet.init(function()
-	local module_base = module_info.get_base_info()
-	if not module_base.module_name then                     --不是热更模块，监听所有地址
-		monitor_all()
-	end
-	skynet.fork(function()
-		for mod_name,_ in pairs(g_register_map) do
-			local id_list = g_mod_svr_ids_map[mod_name]
-		end
-	end)
-end)
 
 local function get_balance(t)
     local id_list = t.cur_id_list
@@ -223,8 +211,20 @@ function M:open_switch()
 	is_close_swtich = false
 end
 
+skynet.init(function()
+	local module_base = module_info.get_base_info()
+	if not module_base.module_name then                     --不是热更模块，监听所有地址
+		monitor_all()
+	end
+end)
+
 --模块必须全部启动好了才能查询访问其他服务
 function M:open_ready()
+	skynet.fork(function()
+		for mod_name,_ in pairs(g_register_map) do
+			local _ = g_mod_svr_ids_map[mod_name]
+		end
+	end)
 	is_ready = true
 end
 
@@ -342,10 +342,30 @@ function M:new(module_name,instance_name,can_switch_func)
         balance = 1,
 		cur_name_id_list = g_name_id_list_map[module_name],
 		name_balance = 1,
+
+		send = skynet.send,
+		call = skynet.call,
     }
 
     setmetatable(t,meta)
     return t
+end
+
+--[[
+	函数作用域：M 的成员函数
+	函数名称: new_raw
+	描述:创建一个skynet内部rpc调用对象， send,call 使用 rawsend rawcall
+	参数:
+		- module_name (string): 模块名称，需要send或者call通信的模块名称
+		- instance_name (string): 实例名称，它是模块的二级分类
+		- can_switch_func (function): 是否可以切服，当连接的模块服务地址更新后，是否要切换到新服务，每次发消息的时候都会检测是否切服
+]]
+function M:new_raw(module_name,instance_name,can_switch_func)
+	local t = M:new(module_name,instance_name,can_switch_func)
+	t.send = skynet.rawsend
+	t.call = skynet.rawcall
+
+	return t
 end
 
 --有时候不想创建实例
@@ -380,6 +400,7 @@ end
 function M:set_mod_num(num)
 	assert(type(num) == 'number')
 	self.mod_num = num
+	return self
 end
 --[[
 	函数作用域：M:new 对象的成员函数
@@ -390,7 +411,10 @@ end
 ]]
 function M:set_instance_name(name)
 	assert(type(name) == 'string')
+	local cur_name_id_list = self.cur_name_id_list
+	assert(cur_name_id_list[name],"not svr " .. name)
 	self.instance_name = name
+	return self
 end
 --[[
 	函数作用域：M:new 对象的成员函数
@@ -437,7 +461,7 @@ end
 ]]
 function M:mod_send(...)
 	switch_svr(self)
-	skynet.send(get_mod(self),'lua',...)
+	self.send(get_mod(self),'lua',...)
 end
 
 --[[
@@ -447,7 +471,7 @@ end
 ]]
 function M:mod_call(...)
 	switch_svr(self)
-	return skynet.call(get_mod(self),'lua',...)
+	return self.call(get_mod(self),'lua',...)
 end
 
 --[[
@@ -457,7 +481,7 @@ end
 ]]
 function M:balance_send(...)
 	switch_svr(self)
-	return skynet.send(get_balance(self),'lua',...)
+	return self.send(get_balance(self),'lua',...)
 end
 
 --[[
@@ -467,7 +491,7 @@ end
 ]]
 function M:balance_call(...)
 	switch_svr(self)
-	return skynet.call(get_balance(self),'lua',...)
+	return self.call(get_balance(self),'lua',...)
 end
 
 --[[
@@ -477,7 +501,7 @@ end
 ]]
 function M:mod_send_by_name(...)
 	switch_svr(self)
-	skynet.send(get_name_mod(self),'lua',...)
+	self.send(get_name_mod(self),'lua',...)
 end
 
 --[[
@@ -487,7 +511,7 @@ end
 ]]
 function M:mod_call_by_name(...)
 	switch_svr(self)
-	return skynet.call(get_name_mod(self),'lua',...)
+	return self.call(get_name_mod(self),'lua',...)
 end
 
 --[[
@@ -497,7 +521,7 @@ end
 ]]
 function M:balance_send_by_name(...)
 	switch_svr(self)
-	skynet.send(get_name_balance(self),'lua',...)
+	self.send(get_name_balance(self),'lua',...)
 end
 
 --[[
@@ -507,7 +531,7 @@ end
 ]]
 function M:balance_call_by_name(...)
 	switch_svr(self)
-	return skynet.call(get_name_balance(self),'lua',...)
+	return self.call(get_name_balance(self),'lua',...)
 end
 
 --[[
@@ -519,8 +543,30 @@ function M:broadcast(...)
 	switch_svr(self)
 	local id_list = self.cur_id_list
 	for _,id in ipairs(id_list) do
-		skynet.send(id,'lua',...)
+		self.send(id,'lua',...)
 	end
+end
+
+--[[
+	函数作用域：M:new 对象的成员函数
+	函数名称：broadcast
+	描述:  广播在module_name服务列表中的服务id skynet call lua消息
+]]
+
+function M:broadcast_call(...)
+	switch_svr(self)
+	local id_list = self.cur_id_list
+	local ret_map = {}
+	for _,id in ipairs(id_list) do
+		if self.call == skynet.rawcall then
+			local msg, sz = self.call(id,'lua',...)
+			ret_map[id] = skynet.tostring(msg, sz)
+		else
+			ret_map[id] = {self.call(id,'lua',...)}
+		end
+	end
+
+	return ret_map
 end
 
 --[[
@@ -536,8 +582,34 @@ function M:broadcast_by_name(...)
 
 	local id_list = cur_name_id_list[self.instance_name]
 	for _,id in ipairs(id_list) do
-		skynet.send(id,'lua',...)
+		self.send(id,'lua',...)
 	end
+end
+
+--[[
+	函数作用域：M:new 对象的成员函数
+	函数名称：broadcast_by_name
+	描述:  广播在instance_name服务列表中的服务id skynet call lua消息
+]]
+
+function M:broadcast_call_by_name(...)
+	assert(self.instance_name,"not instance_name")
+	local cur_name_id_list = self.cur_name_id_list
+	assert(cur_name_id_list[self.instance_name],"not svr " .. self.instance_name)
+	switch_svr(self)
+
+	local id_list = cur_name_id_list[self.instance_name]
+	local ret_map = {}
+	for _,id in ipairs(id_list) do
+		if self.call == skynet.rawcall then
+			local msg, sz = self.call(id,'lua',...)
+			ret_map[id] = skynet.tostring(msg, sz)
+		else
+			ret_map[id] = {self.call(id,'lua',...)}
+		end
+	end
+	
+	return ret_map
 end
 
 return M

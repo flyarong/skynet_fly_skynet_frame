@@ -5,23 +5,30 @@ local websocket = require "http.websocket"
 local socket = require "skynet.socket"
 local pb_netpack = require "skynet-fly.netpack.pb_netpack"
 local table_util = require "skynet-fly.utils.table_util"
-
-local net_util = nil
+local contriner_client = require "skynet-fly.client.contriner_client"
+contriner_client:register("share_config_m")
 
 local CMD = {}
 
 local g_config
+local net_util = nil
 
 local function dispatch(fd,packname,res)
-	log.info("dispatch:",g_config.net_util,fd,packname,res)
+	log.info("dispatch:",g_config.protocol,fd,packname,res)
 end
 
 local function connnect(handle)
+	local confclient = contriner_client:new("share_config_m")
+	local room_game_login = confclient:mod_call('query','room_game_login')
 	local fd
 	if g_config.protocol == 'websocket' then
-		fd = websocket.connect("ws://127.0.0.1:8001")
+		local port = room_game_login.wsgateconf.port
+		assert(port, "not wsgateconf port")
+		fd = websocket.connect("ws://127.0.0.1:" .. port)
 	else
-		fd = socket.open('127.0.0.1',8001)
+		local port = room_game_login.gateconf.port
+		assert(port, "not gateconf port")
+		fd = socket.open('127.0.0.1', port)
 	end
 	if not fd then
 		log.error("connect faild ")
@@ -105,9 +112,9 @@ local function reload_switch_test(mod_name)
 	local out_wi = nil
 	local fd
 	fd = connnect(function(_,packname,res)
-		log.info("reload_switch_test dispatch1:",g_config.net_util,packname,res)
+		log.info("reload_switch_test dispatch1:",g_config.protocol,packname,res)
 		if packname == '.login.LoginRes' then
-			net_util.send(nil,fd,'.login.matchReq',{table_name = "default"})
+			net_util.send(nil,fd,'.login.matchReq',{table_name = "room_3"})
 		elseif packname == '.login.serverInfoRes' then
 			login_res = res
 			skynet.wakeup(wi)
@@ -128,7 +135,7 @@ local function reload_switch_test(mod_name)
 	fd = connnect(function(_,packname,res)
 		log.info("reload_switch_test dispatch2:",packname,res)
 		if packname == '.login.LoginRes' then
-			net_util.send(nil,fd,'.login.matchReq',{table_name = "default"})
+			net_util.send(nil,fd,'.login.matchReq',{table_name = "room_3"})
 		elseif packname == '.login.serverInfoRes' then
 			new_login_res = res
 			skynet.wakeup(wi)
@@ -148,7 +155,7 @@ local function reload_reconnet_test(mod_name)
 	local wi = coroutine.running()
 	local login_res = nil
 	local fd = connnect(function(_,packname,res)
-		log.info("reload_reconnet_test dispatch1:",g_config.net_util,packname,res)
+		log.info("reload_reconnet_test dispatch1:",g_config.protocol,packname,res)
 		if packname == '.login.LoginRes' then
 			skynet.wakeup(wi)
 			login_res = res
@@ -168,8 +175,8 @@ local function reload_reconnet_test(mod_name)
 
 	local new_login_res = nil
 	local wi = coroutine.running()
-	local fd = connnect(function(_,packname,res)
-		log.info("reload_reconnet_test dispatch2:",g_config.net_util,packname,res)
+	local _ = connnect(function(_,packname,res)
+		log.info("reload_reconnet_test dispatch2:",g_config.protocol,packname,res)
 		if packname == '.login.LoginRes' then
 			skynet.wakeup(wi)
 			new_login_res = res
@@ -187,7 +194,7 @@ local function player_game(login_res)
 	login_res = login_res or {}
 	local fd
 	fd = connnect(function(_,packname,res)
-		log.info("player_game:",fd,g_config.net_util,packname,res)
+		log.info("player_game:",fd,g_config.protocol,packname,res)
 
 		if packname == '.game.NextDoingCast' then
 			if res.doing_player_id ~= g_config.player_id then
@@ -205,7 +212,7 @@ local function player_game(login_res)
 			})
 		elseif packname == '.login.LoginRes' then
 			net_util.send(nil,fd,'.game.GameStatusReq',{player_id = g_config.player_id})
-			net_util.send(nil,fd,'.login.matchReq',{table_name = "default"})
+			net_util.send(nil,fd,'.login.matchReq',{table_name = "room_3"})
 		elseif packname == '.login.serverInfoRes' then
 			for k,v in pairs(res) do
 				login_res[k] = v
@@ -239,13 +246,13 @@ end
 
 --玩游戏过程中重连
 local function player_game_reconnect()
-	local fd = player_game()
+	player_game()
 
 	--玩个5秒断开
 	skynet.sleep(500)
 	--重新连接
 	log.info("重新连接:",g_config)
-	local fd = player_game()
+	player_game()
 end
 
 --游戏开始-热更-重连-再重开游戏
@@ -253,7 +260,7 @@ local function player_reload_reconnect(mod_name)
 	local begin_login_res = {}
 	local reconnect_login_res = {}
 	local restart_login_res = {}
-	local fd = player_game(begin_login_res)
+	player_game(begin_login_res)
 
 	--玩个3秒断开
 	skynet.sleep(300)
@@ -282,7 +289,11 @@ function CMD.start(config)
 	pb_netpack.load('./proto')
 	g_config = config
 
-	net_util = require (config.net_util)
+	if g_config.protocol == 'websocket' then
+		net_util = require "skynet-fly.utils.net.ws_pbnet_util"
+	else
+		net_util = require "skynet-fly.utils.net.pbnet_util"
+	end
 	
 	skynet.fork(function()
 		--disconnect_test()

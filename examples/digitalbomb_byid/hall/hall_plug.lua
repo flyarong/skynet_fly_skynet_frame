@@ -4,7 +4,6 @@ local skynet = require "skynet"
 local contriner_client = require "skynet-fly.client.contriner_client"
 local queue = require "skynet.queue"
 local timer = require "skynet-fly.timer"
-local module_cfg = require "skynet-fly.etc.module_info".get_cfg()
 local pb_netpack = require "skynet-fly.netpack.pb_netpack"
 local errors_msg = require "msg.errors_msg"
 local login_msg = require "msg.login_msg"
@@ -14,15 +13,27 @@ local pcall = pcall
 local next = next
 local assert = assert
 
-local g_fd_map = {}
+local pbnet_byid = require "skynet-fly.utils.net.pbnet_byid"
+local ws_pbnet_byid = require "skynet-fly.utils.net.ws_pbnet_byid"
+
 local g_interface_mgr = nil
 
 local M = {}
 
-M.unpack = require(module_cfg.net_util).unpack
-M.send = require(module_cfg.net_util).send
+--解包函数
+M.unpack = pbnet_byid.unpack
+--发包函数
+M.send = pbnet_byid.send
 --广播函数
-M.broadcast = require(module_cfg.net_util).broadcast
+M.broadcast = pbnet_byid.broadcast
+
+--解包函数
+M.ws_unpack = ws_pbnet_byid.unpack
+--发包函数
+M.ws_send = ws_pbnet_byid.send
+--广播函数
+M.ws_broadcast = ws_pbnet_byid.broadcast
+
 M.disconn_time_out = timer.minute                   --掉线一分钟就清理
 
 local function login_out_req(player_id,packname,pack_body)

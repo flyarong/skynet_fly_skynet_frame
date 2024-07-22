@@ -5,6 +5,7 @@ local skynet = require "skynet"
 local queue = require "skynet.queue"()
 local timer = require "skynet-fly.timer"
 local time_util = require "skynet-fly.utils.time_util"
+local skynet_util = require "skynet-fly.utils.skynet_util"
 
 contriner_client:register("room_game_table_m")
 
@@ -16,6 +17,7 @@ local next = next
 
 local SELF_ADDRESS = nil
 
+local g_max_empty_time = nil
 local g_alloc_table_id = 1              --桌子id分配
 local INIT_TABLE_ID = g_alloc_table_id  --初始id
 local MAX_TABLE_ID = nil				--最大id
@@ -32,7 +34,7 @@ local function alloc_table_id()
 	local table_id = nil
 	local cur_start_id = g_alloc_table_id
 	while not table_id do
-		if not g_table_map[g_alloc_table_id] then
+		if not g_table_map[SELF_ADDRESS .. ':' .. g_alloc_table_id] then
 			table_id = g_alloc_table_id
 		end
 		g_alloc_table_id = g_alloc_table_id + 1
@@ -44,20 +46,24 @@ local function alloc_table_id()
 		end
 	end
 
+	if not table_id then
+		return nil
+	end
+
 	return SELF_ADDRESS .. ':' .. table_id,table_id
 end
 
-local function create_table(table_name, create_player_id)
+local function create_table(table_name, ...)
     local table_id,num_id = alloc_table_id()
 	if not table_id then
-		log.info("alloc_table_id err ",table_id)
+		log.info("alloc_table_id err tablefull")
 		return alloc_plug.tablefull()
 	end
 
-	local room_client = contriner_client:new("room_game_table_m",table_name,function() return false end)
+	local room_client = contriner_client:new("room_game_table_m", table_name, function() return false end)
 	room_client:set_mod_num(num_id)
-	local table_server_id = room_client:get_mod_server_id()
-	local ok,errocode,errormsg = room_client:mod_call('create_table',table_id,SELF_ADDRESS) 
+	local table_server_id = room_client:get_mod_server_id_by_name()
+	local ok,errocode,errormsg = room_client:mod_call_by_name('create_table', table_id, SELF_ADDRESS, ...)
 	if ok then
 		g_table_map[table_id] = {
 			room_client = room_client,
@@ -67,14 +73,14 @@ local function create_table(table_name, create_player_id)
 		}
 		local config = errocode
 		g_empty_map[table_id] = time_util.time()
-		alloc_plug.createtable(table_name,table_id,config,create_player_id)
+		alloc_plug.createtable(table_name, table_id, config, ...)
 		return table_id
 	else
 		return nil,errocode,errormsg
 	end
 end
 
-local function join(player_id, gate, fd, hall_server_id, table_name, table_id)
+local function join(player_id, gate, fd, is_ws, hall_server_id, table_name, table_id)
     local t_info = g_table_map[table_id]
     if not t_info then
         return alloc_plug.table_not_exists()
@@ -82,7 +88,7 @@ local function join(player_id, gate, fd, hall_server_id, table_name, table_id)
 	local table_server_id = t_info.table_server_id
     local room_client = t_info.room_client
     local table_id = t_info.table_id
-    local ok,errcode,errmsg = room_client:mod_call('enter',table_id,player_id,gate,fd,hall_server_id)
+    local ok,errcode,errmsg = room_client:mod_call_by_name('enter',table_id,player_id,gate,fd,is_ws,hall_server_id)
     if not ok then
         log.info("enter table fail ",player_id,errcode,errmsg)
         return nil,errcode,errmsg
@@ -96,10 +102,10 @@ local function join(player_id, gate, fd, hall_server_id, table_name, table_id)
     end
 end
 
-local function match_join(player_id, gate, fd, hall_server_id, table_name)
+local function match_join(player_id, gate, fd, is_ws, hall_server_id, table_name)
     assert(not g_player_map[player_id])
     local table_id = alloc_plug.match(player_id)
-    local ok,errcode,errmsg
+    local _,errcode,errmsg
     if not table_id then
         table_id,errcode,errmsg = create_table(table_name)
         if not table_id then
@@ -108,10 +114,10 @@ local function match_join(player_id, gate, fd, hall_server_id, table_name)
         end
     end
 
-    return join(player_id, gate, fd, hall_server_id, table_name, table_id)
+    return join(player_id, gate, fd, is_ws, hall_server_id, table_name, table_id)
 end
 
-local function create_join(player_id, gate, fd, hall_server_id, table_name)
+local function create_join(player_id, gate, fd, is_ws, hall_server_id, table_name)
 	assert(not g_player_map[player_id])
 	local ok,errcode,errmsg = create_table(table_name)
 	if not ok then
@@ -119,14 +125,14 @@ local function create_join(player_id, gate, fd, hall_server_id, table_name)
 	end
 
 	local table_id = ok
-	return join(player_id, gate, fd, hall_server_id, table_name)
+	return join(player_id, gate, fd, is_ws, hall_server_id, table_name, table_id)
 end
 
 local function leave(player_id)
     local t_info = assert(g_player_map[player_id])
     local room_client = t_info.room_client
     local table_id = t_info.table_id
-    local ok,errcode,errmsg = room_client:mod_call('leave',table_id,player_id)
+    local ok,errcode,errmsg = room_client:mod_call_by_name('leave',table_id,player_id)
     if not ok then
         log.info("leave table fail ",table_id,player_id,errcode,errmsg)
         return nil,errcode,errmsg
@@ -149,14 +155,17 @@ end
 
 --销毁房间
 local function dismisstable(table_id)
-	local t_info = assert(g_table_map[table_id])
+	local t_info = g_table_map[table_id]
+	if not t_info then
+		return
+	end
 	local player_list = t_info.player_list
 	if #player_list > 0 then
 		log.warn("can`t dismisstable is have player ",table_id,table.concat(player_list,','))
 		return false
 	end
 	local room_client = t_info.room_client
-	local isok = room_client:mod_call('dismisstable',table_id)
+	local isok = room_client:mod_call_by_name('dismisstable',table_id)
 	if not isok then
 		log.error("dismisstable err ", table_id)
 		return false
@@ -172,8 +181,8 @@ end
 ----------------------------------------------------------------------------------
 local interface = {}
 --创建桌子
-function interface.create_table(table_name)
-	return queue(create_table,table_name)
+function interface.create_table(table_name, ...)
+	return queue(create_table,table_name, ...)
 end
 
 -- 销毁桌子
@@ -190,23 +199,34 @@ end
 ----------------------------------------------------------------------------------
 local CMD = {}
 --创建进入房间
-function CMD.create_join(player_id, gate, fd, hall_server_id, table_name)
-	return queue(create_join, player_id, gate, fd, hall_server_id, table_name)
+function CMD.create_join(player_id, gate, fd, is_ws, hall_server_id, table_name)
+	return queue(create_join, player_id, gate, fd, is_ws, hall_server_id, table_name)
 end
 
 --匹配进入房间
-function CMD.match_join(player_id, gate, fd, hall_server_id, table_name)
-    return queue(match_join, player_id, gate, fd, hall_server_id, table_name)
+function CMD.match_join(player_id, gate, fd, is_ws, hall_server_id, table_name)
+    return queue(match_join, player_id, gate, fd, is_ws, hall_server_id, table_name)
 end
 
 --指定房间进入
-function CMD.join(player_id, gate, fd, hall_server_id, table_name, table_id)
-    return queue(join, player_id, gate, fd, hall_server_id, table_name, table_id)
+function CMD.join(player_id, gate, fd, is_ws, hall_server_id, table_name, table_id)
+    return queue(join, player_id, gate, fd, is_ws, hall_server_id, table_name, table_id)
 end
 
 --离开房间
 function CMD.leave(player_id)
     return queue(leave, player_id)
+end
+
+local function check_dismisstable()
+	local cur_time = time_util.time()
+	for table_id,empty_time in pairs(g_empty_map) do
+		local sub_time = cur_time - empty_time
+		local t_info = g_table_map[table_id]
+		if t_info and sub_time >= g_max_empty_time then
+			skynet.fork(interface.dismisstable, table_id)
+		end
+	end
 end
 
 function CMD.start(config)
@@ -228,9 +248,13 @@ function CMD.start(config)
 
 	if alloc_plug.register_cmd then
 		for name,func in pairs(alloc_plug.register_cmd) do
-			assert(not CMD[name],"repeat cmd " .. name)
-			CMD[name] = func
+			skynet_util.extend_cmd_func(name, func)
 		end
+	end
+
+	g_max_empty_time = config.max_empty_time       --设置桌子空置多久后就会解散
+	if g_max_empty_time and g_max_empty_time > 0 then
+		timer:new(timer.minute * 10, 0, check_dismisstable)
 	end
 
 	alloc_plug.init(interface)
